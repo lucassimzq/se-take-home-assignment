@@ -1,12 +1,14 @@
 <script setup lang="ts">
-import { ref, watch} from 'vue'
+import { ref, watch, computed} from 'vue'
 import Button from './Components/Button.vue'
+import OrderItem from './Components/OrderItem.vue'
 
 // Interfaces
 interface Order {
   name: string
   time: string
   isVip: boolean
+  status: 'pending' | 'processing' | 'completed'
   processedByBot?: string
   processedAt?: string
 }
@@ -14,57 +16,64 @@ interface Order {
 interface Bot {
   id: number
   name: string
-  status: 'IDLE' | 'PROCESSING'
+  status: 'idle' | 'processing'
 }
 
 const PROCESSING_TIME = 10 // seconds
 
 // States
-const pendingOrders = ref<Order[]>([])
-const processingOrders = ref<Order[]>([])
-const completedOrders = ref<Order[]>([])
+const orders = ref<Order[]>([])
 const bots = ref<Bot[]>([])
+
+// For display purposes
+const pendingOrders = computed(() => orders.value.filter(o => o.status === 'pending'))
+const processingOrders = computed(() => orders.value.filter(o => o.status === 'processing'))
+const completedOrders = computed(() => orders.value.filter(o => o.status === 'completed'))
 
 const normalOrderCount = ref(0)
 const vipOrderCount = ref(0)
 const botId = ref(0)
 
 // This function creates an order with a unique name and time
-function createOrder(name: string, isVip: boolean): Order {
+function createNewOrder(name: string, isVip: boolean): Order {
   return {
     name,
     isVip,
-    time: new Date().toLocaleTimeString()
+    time: new Date().toLocaleTimeString(),
+    status: 'pending',
   }
 }
 
 // This function queues an order to be processed by a bot
 function queueOrder(order: Order) {
+  const pendingList = orders.value.filter(o => o.status === 'pending');
+
   if (order.isVip) {
-    // Insert behind the last VIP order, or at start if none
-    const lastVipIndex = pendingOrders.value
-        .map(o => o.isVip)
-        .lastIndexOf(true)
-    if (lastVipIndex >= 0) {
-      pendingOrders.value.splice(lastVipIndex + 1, 0, order)
+    const lastVipIndex = pendingList.map(o => o.isVip).lastIndexOf(true);
+    const insertIndex = lastVipIndex >= 0
+        ? orders.value.findIndex(o => o === pendingList[lastVipIndex]) + 1
+        : orders.value.findIndex(o => o.status === 'pending');
+
+    if (insertIndex >= 0) {
+      orders.value.splice(insertIndex, 0, order);
     } else {
-      pendingOrders.value.unshift(order)
+      orders.value.push(order);
     }
   } else {
-    pendingOrders.value.push(order)
+    orders.value.push(order);
   }
 }
 
 // This function adds a new normal order to the queue
 function addNormalOrder() {
   normalOrderCount.value++
-  queueOrder(createOrder(`O-${normalOrderCount.value}`, false))
+  queueOrder(createNewOrder(`O-${normalOrderCount.value}`, false))
 }
 
 // This function adds a new VIP order to the queue
 function addVipOrder() {
   vipOrderCount.value++
-  queueOrder(createOrder(`VIP-${vipOrderCount.value}`, true))
+  queueOrder(createNewOrder(`VIP-${vipOrderCount.value}`, true))
 }
 
 // This function adds a new bot to the list of bots
@@ -73,7 +82,7 @@ function addBot() {
   bots.value.push({
     id: botId.value,
     name: `Bot-${botId.value}`,
-    status: 'IDLE'
+    status: 'idle'
   })
 }
 
@@ -86,14 +95,14 @@ function removeBot() {
   // Get the latest bot spawned
   const latestBot = bots.value[bots.value.length - 1]
 
-  if (latestBot.status === 'PROCESSING') {
+  if (latestBot.status === 'processing') {
     // If the latest bot is processing an order, drop the order back into the queue
     const orderProcessedBySelectedBot = processingOrders.value.find(o => o.processedByBot === latestBot.name)
 
     if (orderProcessedBySelectedBot) {
       orderProcessedBySelectedBot.processedByBot = undefined
-      queueOrder(orderProcessedBySelectedBot)
-      processingOrders.value = processingOrders.value.filter(o => o !== orderProcessedBySelectedBot)
+      orderProcessedBySelectedBot.processedAt = undefined
+      orderProcessedBySelectedBot.status = 'pending'
     }
   }
 
@@ -104,41 +113,28 @@ function removeBot() {
 // This function is called every second to process orders
 // It will process orders until there are no more pending orders or bots available
 function processOrders() {
-  const idleBots = bots.value.filter(b => b.status === 'IDLE')
+  const idleBots = bots.value.filter(b => b.status === 'idle');
+  const pendingList = orders.value.filter(o => o.status === 'pending');
 
-  while (pendingOrders.value.length > 0 && idleBots.length > 0) {
-    const bot = idleBots.shift()
-    const order = pendingOrders.value.shift()
+  while (pendingList.length > 0 && idleBots.length > 0) {
+    const bot = idleBots.shift();
+    const order = pendingList.shift();
 
-    // If there's no bot or order, break the loop'
-    if (!bot || !order) break
+    if (!bot || !order) break;
 
-    bot.status = 'PROCESSING'
-    order.processedByBot = bot.name
-
-    processingOrders.value.push(order)
+    bot.status = 'processing';
+    order.processedByBot = bot.name;
+    order.status = 'processing';
 
     setTimeout(() => {
-      // Move from processing to completed
-      const idx = processingOrders.value.indexOf(order)
-      if (idx !== -1) {
-        // Check if the order is being processed by a new bot
-        // If so, do not move it to completed
-        if (order.processedByBot !== bot.name) {
-          return
-        }
-        processingOrders.value.splice(idx, 1)
-      } else {
-        // Return because if the order is not in processingOrders, meaning the bot processing it was removed
-        return
-      }
+      // If still processed by the same bot, don't mark as completed, assuming it is failed
+      if (order.processedByBot !== bot.name) return;
 
-      order.processedAt = new Date().toLocaleTimeString()
-      completedOrders.value.push(order)
+      order.processedAt = new Date().toLocaleTimeString();
+      order.status = 'completed';
 
-      bot.status = 'IDLE'
-      processOrders()
-    }, PROCESSING_TIME * 1000)
+      bot.status = 'idle';
+    }, PROCESSING_TIME * 1000);
   }
 }
 
@@ -157,7 +153,7 @@ watch([pendingOrders, bots], processOrders, { deep: true })
 
   <!-- Bots section-->
   <div v-if="!bots.length" class="mt-3">
-    <p>No bots added. Please add a bot to start processing orders.</p>
+    <p class="text-sm text-gray-700"><em>No bots added. Please add a bot to start processing orders.</em></p>
   </div>
   <div v-else class="mt-3">
     <p class="font-semibold">Bots:</p>
@@ -166,7 +162,7 @@ watch([pendingOrders, bots], processOrders, { deep: true })
           v-for="bot in bots"
           :key="bot.id"
           class="p-2 rounded-lg text-sm shadow-sm"
-          :class="bot.status === 'IDLE' ? 'bg-gray-200' : 'bg-green-200'"
+          :class="bot.status === 'idle' ? 'bg-gray-200' : 'bg-green-200'"
       >
         {{ bot.name }} ({{ bot.status }})
       </div>
@@ -189,24 +185,8 @@ watch([pendingOrders, bots], processOrders, { deep: true })
       </p>
 
       <template v-else>
-        <div
-            v-for="order in processingOrders"
-            :key="order.name"
-            class="mt-2 p-2 border-2 border-orange-400 rounded-lg flex justify-between text-sm animate-pulse"
-        >
-          <span>{{ order.name }}</span>
-          <span>{{ order.processedByBot }}</span>
-          <span>{{ order.time }}</span>
-        </div>
-        <div
-            v-for="order in pendingOrders"
-            :key="order.name"
-            class="mt-2 p-2 border-2 border-gray-300 rounded-lg flex justify-between text-sm"
-        >
-          <span>{{ order.name }}</span>
-          <span>-</span>
-          <span>{{ order.time }}</span>
-        </div>
+        <OrderItem :orders="processingOrders" status="processing" />
+        <OrderItem :orders="pendingOrders" status="pending" />
       </template>
     </div>
 
@@ -221,15 +201,7 @@ watch([pendingOrders, bots], processOrders, { deep: true })
       <p v-if="!completedOrders.length" class="mt-2 text-gray-500">
         No completed orders yet.
       </p>
-      <div
-          v-for="order in completedOrders"
-          :key="order.name"
-          class="mt-2 p-2 border-2 border-green-400 rounded-lg flex justify-between text-sm"
-      >
-        <span>{{ order.name }}</span>
-        <span>{{ order.processedByBot }}</span>
-        <span>{{ order.processedAt }}</span>
-      </div>
+      <OrderItem :orders="completedOrders" status="completed" />
     </div>
   </div>
 </template>
