@@ -7,7 +7,6 @@ interface Order {
   name: string
   time: string
   isVip: boolean
-  remarks?: string
   processedByBot?: string
   processedAt?: string
 }
@@ -42,7 +41,7 @@ function createOrder(name: string, isVip: boolean): Order {
 // This function queues an order to be processed by a bot
 function queueOrder(order: Order) {
   if (order.isVip) {
-    // Insert behind last VIP order, or at start if none
+    // Insert behind the last VIP order, or at start if none
     const lastVipIndex = pendingOrders.value
         .map(o => o.isVip)
         .lastIndexOf(true)
@@ -55,7 +54,6 @@ function queueOrder(order: Order) {
     pendingOrders.value.push(order)
   }
 }
-
 
 // This function adds a new normal order to the queue
 function addNormalOrder() {
@@ -70,7 +68,6 @@ function addVipOrder() {
   queueOrder(createOrder(`VIP-${vipOrderCount.value}`, true))
   processOrders()
 }
-
 
 // This function adds a new bot to the list of bots
 function addBot() {
@@ -89,23 +86,26 @@ function removeBot() {
   // If there are no bots, do nothing
   if (!bots.value.length) return
 
-  // If there are bots, check if there's any idling one
-  const idlingBot = bots.value.find(b => b.status === 'IDLE')
-  if (!idlingBot) {
-    alert('Cannot remove bot while all are processing orders.')
-    return
+  // Get the latest bot spawned
+  const latestBot = bots.value[bots.value.length - 1]
+
+  if (latestBot.status === 'PROCESSING') {
+    // If the latest bot is processing an order, drop the order back into the queue
+    const orderProcessedBySelectedBot = processingOrders.value.find(o => o.processedByBot === latestBot.name)
+
+    if (orderProcessedBySelectedBot) {
+      orderProcessedBySelectedBot.processedByBot = undefined
+      queueOrder(orderProcessedBySelectedBot)
+      processingOrders.value = processingOrders.value.filter(o => o !== orderProcessedBySelectedBot)
+    }
   }
 
-  // If there's an idling bot, remove it
-  const idx = bots.value.indexOf(idlingBot)
-  if (idx !== -1) {
-    bots.value.splice(idx, 1)
-  }
+  // Remove the bot from the list
+  bots.value = bots.value.filter(b => b !== latestBot)
 }
 
-/* ==============================
-   Processing Logic
-============================== */
+// This function is called every second to process orders
+// It will process orders until there are no more pending orders or bots available
 function processOrders() {
   const idleBots = bots.value.filter(b => b.status === 'IDLE')
 
@@ -118,7 +118,6 @@ function processOrders() {
 
     bot.status = 'PROCESSING'
     order.processedByBot = bot.name
-    order.remarks = `Processed by ${bot.name}`
 
     processingOrders.value.push(order)
 
@@ -127,6 +126,9 @@ function processOrders() {
       const idx = processingOrders.value.indexOf(order)
       if (idx !== -1) {
         processingOrders.value.splice(idx, 1)
+      } else {
+        // Return because if the order is not in processingOrders, meaning the bot processing it was removed
+        return
       }
 
       order.processedAt = new Date().toLocaleTimeString()
