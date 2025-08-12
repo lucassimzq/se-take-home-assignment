@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, watch} from 'vue'
 import Button from './Components/Button.vue'
 
 // Interfaces
@@ -59,14 +59,12 @@ function queueOrder(order: Order) {
 function addNormalOrder() {
   normalOrderCount.value++
   queueOrder(createOrder(`O-${normalOrderCount.value}`, false))
-  processOrders()
 }
 
 // This function adds a new VIP order to the queue
 function addVipOrder() {
   vipOrderCount.value++
   queueOrder(createOrder(`VIP-${vipOrderCount.value}`, true))
-  processOrders()
 }
 
 // This function adds a new bot to the list of bots
@@ -77,7 +75,6 @@ function addBot() {
     name: `Bot-${botId.value}`,
     status: 'IDLE'
   })
-  processOrders()
 }
 
 // This function removes a bot from the list of bots
@@ -125,6 +122,11 @@ function processOrders() {
       // Move from processing to completed
       const idx = processingOrders.value.indexOf(order)
       if (idx !== -1) {
+        // Check if the order is being processed by a new bot
+        // If so, do not move it to completed
+        if (order.processedByBot !== bot.name) {
+          return
+        }
         processingOrders.value.splice(idx, 1)
       } else {
         // Return because if the order is not in processingOrders, meaning the bot processing it was removed
@@ -139,11 +141,12 @@ function processOrders() {
     }, PROCESSING_TIME * 1000)
   }
 }
+
+// Watch for changes in pending orders and bots to trigger order processing
+watch([pendingOrders, bots], processOrders, { deep: true })
 </script>
 
 <template>
-  <h1 class="text-2xl font-bold">FeedMe Kitchen Display System</h1>
-
   <!-- Action Buttons -->
   <div class="mt-3 flex gap-2">
     <Button class="bg-blue-500 text-white" @click="addNormalOrder">New Normal Order</Button>
