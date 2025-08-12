@@ -1,3 +1,16 @@
+# Installation & Running on your local machine
+
+## Requirements
+- Node.js
+- NPM
+
+1. Clone this repo
+2. Run `npm install`
+3. Run `npm run dev` to start the server
+4. Open your browser and go to the url that is displayed in the terminal
+
+---
+
 ## FeedMe Software Engineer Take Home Assignment
 Below is a take home assignment before the interview of the position. You are required to
 1. Understand the situation and use case. You may contact the interviewer for further clarification.
